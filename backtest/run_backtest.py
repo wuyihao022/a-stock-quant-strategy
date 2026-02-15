@@ -1,113 +1,111 @@
-"""最终优化版回测 - 多参数测试"""
+"""10年回测 - 修复版"""
 
 import backtrader as bt
 import pandas as pd
 from data.data_loader import AShareDataLoader
-from itertools import product
 
-# 沪深300核心股票
-HS300_CORE = [
-    ("600519", "贵州茅台"),
-    ("600036", "招商银行"),
-    ("601318", "中国平安"),
-    ("600900", "长江电力"),
-    ("601166", "兴业银行"),
-    ("000333", "美的集团"),
-    ("002594", "比亚迪"),
-    ("601012", "隆基绿能"),
-    ("600276", "恒瑞医药"),
-    ("600887", "伊利股份"),
-]
-
-# ============ 优化后的双均线策略 ============
-class OptimizedDualMA(bt.Strategy):
-    """优化的双均线策略，只做多，金叉买死叉卖"""
+# ============== 策略1: 双均线金叉死叉 ==============
+class DualMAStrategy(bt.Strategy):
     params = dict(fast=5, slow=20)
     
     def __init__(self):
         self.fast = bt.indicators.SimpleMovingAverage(self.data.close, period=self.params.fast)
         self.slow = bt.indicators.SimpleMovingAverage(self.data.close, period=self.params.slow)
-        self.prev_cross = 0
+        self.prev_fast = 0
         
     def next(self):
-        curr_cross = 1 if self.fast[0] > self.slow[0] else -1
+        if len(self.data) < self.params.slow + 5:
+            return
+            
+        fast_now = self.fast[0]
+        slow_now = self.slow[0]
+        fast_prev = self.fast[-1]
+        slow_prev = self.slow[-1]
         
         # 金叉买入
-        if curr_cross == 1 and self.prev_cross == -1:
+        if fast_now > slow_now and fast_prev <= slow_prev:
             if not self.position:
-                size = int(self.broker.getcash() * 0.95 / self.data.close[0] / 100) * 100
-                if size >= 100:
-                    self.buy(size=size)
+                price = self.data.close[0]
+                if price > 0:
+                    size = int(self.broker.getcash() * 0.95 / price / 100) * 100
+                    if size >= 100:
+                        self.buy(size=size)
                     
         # 死叉卖出
-        elif curr_cross == -1 and self.prev_cross == 1:
+        elif fast_now < slow_now and fast_prev >= slow_prev:
             if self.position:
                 self.close()
                 
-        self.prev_cross = curr_cross
+        self.prev_fast = fast_now
 
 
-# 优化参数组合
-PARAM_COMBOS = [
-    (5, 20),
-    (10, 30),
-    (10, 60),
-    (20, 60),
-    (5, 10),
-]
-
-def quick_backtest(symbol, fast, slow, start_date="2024-01-01"):
-    """快速回测"""
-    loader = AShareDataLoader()
-    df = loader.get_daily_bars(symbol, start_date)
-    if len(df) < 50:
-        return None
+# ============== 策略2: 突破20日均线 ==============
+class BreakoutStrategy(bt.Strategy):
+    params = dict(period=20)
+    
+    def __init__(self):
+        self.sma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.params.period)
         
-    df = df[df['date'] >= start_date][['date','open','high','low','close','volume']]
+    def next(self):
+        if len(self.data) < self.params.period + 5:
+            return
+            
+        close = self.data.close[0]
+        prev_close = self.data.close[-1]
+        sma_now = self.sma[0]
+        sma_prev = self.sma[-1]
+        
+        # 突破买入
+        if prev_close <= sma_prev and close > sma_now:
+            if not self.position:
+                size = int(self.broker.getcash() * 0.95 / close / 100) * 100
+                if size >= 100:
+                    self.buy(size=size)
+                    
+        # 跌破卖出
+        elif prev_close >= sma_prev and close < sma_now:
+            if self.position:
+                self.close()
+
+
+def run_test(code, name, StrategyClass, params):
+    loader = AShareDataLoader()
+    df = loader.get_daily_bars(code, "2014-01-01")
+    if df is None or len(df) < 500:
+        return None
+    
+    df = df[df['date'] >= '2014-01-01'][['date','open','high','low','close','volume']]
     df = df.set_index('date')
     
     cerebro = bt.Cerebro()
-    cerebro.addstrategy(OptimizedDualMA, fast=fast, slow=slow)
+    cerebro.addstrategy(StrategyClass, **params)
     cerebro.adddata(bt.feeds.PandasData(dataname=df))
     cerebro.broker.setcash(1000000)
     cerebro.broker.setcommission(commission=0.001)
     
     initial = cerebro.broker.getcash()
     cerebro.run()
-    final = cerebro.broker.getvalue()
-    
-    return (final - initial) / initial * 100
+    return (cerebro.broker.getvalue() - initial) / initial * 100
 
 
+# 主程序
 print("="*60)
-print("寻找最佳策略参数")
+print("10年回测 (2014-01-01 至今)")
 print("="*60)
 
-best_params = {}
-best_overall = None
+stocks = [
+    ("601318", "中国平安"),
+    ("600036", "招商银行"),
+    ("600519", "贵州茅台"),
+    ("600900", "长江电力"),
+    ("000333", "美的集团"),
+]
 
-# 测试不同参数
-for fast, slow in PARAM_COMBOS:
-    print(f"\n参数: fast={fast}, slow={slow}")
-    total_return = 0
-    count = 0
+for code, name in stocks:
+    print(f"\n{code} {name}")
     
-    for code, name in HS300_CORE:
-        ret = quick_backtest(code, fast, slow)
-        if ret is not None:
-            total_return += ret
-            count += 1
-            print(f"  {code}: {ret:+.1f}%")
+    r1 = run_test(code, name, DualMAStrategy, {'fast': 5, 'slow': 20})
+    r2 = run_test(code, name, BreakoutStrategy, {'period': 20})
     
-    if count > 0:
-        avg_return = total_return / count
-        print(f"  平均: {avg_return:+.1f}%")
-        
-        if best_overall is None or avg_return > best_overall:
-            best_overall = avg_return
-            best_params = {'fast': fast, 'slow': slow}
-
-print("\n" + "="*60)
-print(f"最佳参数: fast={best_params['fast']}, slow={best_params['slow']}")
-print(f"平均收益率: {best_overall:+.1f}%")
-print("="*60)
+    print(f"  双均线(5,20): {r1:+.1f}%")
+    print(f"  突破20日均线: {r2:+.1f}%")

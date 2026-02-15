@@ -38,12 +38,12 @@ pip install -r requirements.txt
 
 ### 回测
 ```bash
-python backtest/run_backtest.py
+python -m backtest.run_backtest
 ```
 
 ### Web UI
 ```bash
-python web/app.py
+python -m web.app
 ```
 
 然后访问 http://localhost:5000

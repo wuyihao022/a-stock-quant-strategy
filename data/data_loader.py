@@ -55,10 +55,53 @@ class AShareDataLoader:
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.sort_values("date").reset_index(drop=True)
+            
+            # 过滤异常数据
+            if "close" in df.columns:
+                # 转换日期并排序
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.sort_values("date").reset_index(drop=True)
+                
+                # 过滤负价格和接近0的价格
+                df = df[df["close"] > 0]
+                
+                # 连续过滤异常波动
+                for _ in range(10):
+                    if len(df) < 50:
+                        break
+                    prev = df["close"].shift(1)
+                    ratio = df["close"] / prev
+                    # 允许的最大波动：±20%
+                    mask = (ratio > 0.8) & (ratio < 1.2)
+                    if mask.all():
+                        break
+                    df = df[mask].reset_index(drop=True)
+                
+                # 只保留足够的数据
+                if len(df) < 50:
+                    return pd.DataFrame()
+            
             return df
         except Exception as e:
             print(f"获取 {symbol} 数据失败: {e}")
             return pd.DataFrame()
+    
+    def get_backtrader_data(self, symbol: str, start: str = "20200101", end: str = None):
+        """获取backtrader-compatible的数据格式"""
+        df = self.get_daily_bars(symbol, start, end)
+        if df is None or len(df) < 50:
+            return None
+        
+        # 确保有必要的列
+        cols = ['date', 'open', 'high', 'low', 'close', 'volume']
+        for col in cols:
+            if col not in df.columns:
+                return None
+        
+        df = df[cols].copy()
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').reset_index(drop=True)
+        return df
 
     def load_factor_universe(self) -> pd.DataFrame:
         """

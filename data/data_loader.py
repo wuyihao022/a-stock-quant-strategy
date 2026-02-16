@@ -57,25 +57,29 @@ class AShareDataLoader:
                 df = df.sort_values("date").reset_index(drop=True)
             
             # 过滤异常数据
-            if "close" in df.columns:
+            if "close" in df.columns and "date" in df.columns:
                 # 转换日期并排序
                 df["date"] = pd.to_datetime(df["date"])
                 df = df.sort_values("date").reset_index(drop=True)
                 
+                # 先按日期过滤，确保只保留指定日期之后的数据
+                try:
+                    start_dt = pd.to_datetime(start) if isinstance(start, str) else start
+                    if start_dt:
+                        df = df[df["date"] >= start_dt]
+                except:
+                    pass
+                
                 # 过滤负价格和接近0的价格
                 df = df[df["close"] > 0]
                 
-                # 连续过滤异常波动
-                for _ in range(10):
-                    if len(df) < 50:
-                        break
-                    prev = df["close"].shift(1)
-                    ratio = df["close"] / prev
-                    # 允许的最大波动：±20%
-                    mask = (ratio > 0.8) & (ratio < 1.2)
-                    if mask.all():
-                        break
-                    df = df[mask].reset_index(drop=True)
+                # 连续过滤异常波动（使用更宽松的阈值30%）
+                prev = df["close"].shift(1)
+                ratio = df["close"] / prev
+                # 过滤单日涨跌幅超过40%的数据（可能是数据错误）
+                # 但保留NaN（第一行没有prev）
+                mask = (ratio > 0.6) | (ratio.isna()) | (ratio < 1.4)
+                df = df[mask].reset_index(drop=True)
                 
                 # 只保留足够的数据
                 if len(df) < 50:
